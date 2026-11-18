@@ -15,6 +15,20 @@
             "inputPricePerM": 0.75,
             "outputPricePerM": 3.75
         },
+        "gemini-4-hydrogen": {
+            "provider": "gemini",
+            "thinkingLevel": "LOW",
+            "maxOutputTokens": 8192,
+            "inputPricePerM": 1.50,
+            "outputPricePerM": 7.50
+        },
+        "gemini-4-carbon": {
+            "provider": "gemini",
+            "thinkingLevel": "LOW",
+            "maxOutputTokens": 8192,
+            "inputPricePerM": 2.00,
+            "outputPricePerM": 10.00
+        },
         "gemini-4-argon": {
             "provider": "gemini",
             "thinkingLevel": "LOW",
@@ -28,6 +42,22 @@
             "maxOutputTokens": 4096,
             "inputPricePerM": 0.10,
             "outputPricePerM": 0.50,
+            "searchPricePer1K": 10.00
+        },
+        "claude-sonnet-5-5": {
+            "provider": "claude",
+            "effort": "low",
+            "maxOutputTokens": 8192,
+            "inputPricePerM": 2.00,
+            "outputPricePerM": 10.00,
+            "searchPricePer1K": 10.00
+        },
+        "claude-opus-5-5": {
+            "provider": "claude",
+            "effort": "low",
+            "maxOutputTokens": 8192,
+            "inputPricePerM": 4.00,
+            "outputPricePerM": 20.00,
             "searchPricePer1K": 10.00
         }
     }
