@@ -6,7 +6,14 @@ const DB = require('./database.js');
 // 分開調整容易搭錯（例如 gemini-3.8-flash 不支援 MINIMAL，會直接回 400）。
 // 目前選用哪個模型存在資料庫，由 /system model 切換，立即生效、不必重啟。
 const FILE = './config/models.json';
+
+// 各 provider 專屬的思考深度參數；回傳錯誤說明，合法則回傳 null。
 const THINKING_LEVELS = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'];
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const PROVIDER_CHECKS = {
+    gemini: p => THINKING_LEVELS.includes(p.thinkingLevel) ? null : `thinkingLevel 須為 ${THINKING_LEVELS.join('/')}`,
+    claude: p => EFFORTS.includes(p.effort) ? null : `effort 須為 ${EFFORTS.join('/')}`,
+};
 
 const db = DB.getConnection();
 
@@ -26,14 +33,20 @@ function readPresets() {
         throw new Error(`${FILE}：default 必須是 models 裡的其中一個`);
     }
     for (const [name, p] of Object.entries(data.models)) {
-        if (!THINKING_LEVELS.includes(p.thinkingLevel)) {
-            throw new Error(`${FILE}：${name} 的 thinkingLevel 須為 ${THINKING_LEVELS.join('/')}`);
+        const check = PROVIDER_CHECKS[p.provider];
+        if (!check) {
+            throw new Error(`${FILE}：${name} 的 provider 須為 ${Object.keys(PROVIDER_CHECKS).join('/')}`);
         }
+        const problem = check(p);
+        if (problem) throw new Error(`${FILE}：${name} 的 ${problem}`);
         if (!Number.isInteger(p.maxOutputTokens) || p.maxOutputTokens <= 0) {
             throw new Error(`${FILE}：${name} 的 maxOutputTokens 須為正整數`);
         }
         if (typeof p.inputPricePerM !== 'number' || typeof p.outputPricePerM !== 'number') {
             throw new Error(`${FILE}：${name} 的 inputPricePerM / outputPricePerM 須為數字`);
+        }
+        if (p.searchPricePer1K !== undefined && typeof p.searchPricePer1K !== 'number') {
+            throw new Error(`${FILE}：${name} 的 searchPricePer1K 須為數字`);
         }
     }
     return data;
@@ -56,7 +69,10 @@ presets = readPresets();
 resolveActive();
 
 module.exports = {
-    /** 目前使用中的模型設定：{ name, thinkingLevel, maxOutputTokens, inputPricePerM, outputPricePerM }。 */
+    /**
+     * 目前使用中的模型設定：{ name, provider, maxOutputTokens, inputPricePerM, outputPricePerM, ... }，
+     * 另含 provider 專屬欄位（gemini：thinkingLevel；claude：effort、searchPricePer1K）。
+     */
     current() {
         return active;
     },
@@ -77,7 +93,7 @@ module.exports = {
         resolveActive();
     },
 
-    /** 切換模型並寫入資料庫。呼叫前應確認模型可用（見 gemini.probe）。 */
+    /** 切換模型並寫入資料庫。呼叫前應確認模型可用（見 llm.probe）。 */
     set(name) {
         if (!presets.models[name]) throw new Error(`${name} 不在 ${FILE}`);
         db.prepare(`INSERT INTO bot_setting (key, value) VALUES ('model', ?)

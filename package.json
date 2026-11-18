@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
     "@google/genai": "^1.50.1",
     "better-sqlite3": "^12.10.0",
     "canvas": "^3.2.3",

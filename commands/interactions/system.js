@@ -5,12 +5,14 @@ const { exec } = require('child_process');
 const DB = require("../../utility/database.js");
 const isafe = require("../../utility/interactionSafe.js");
 const modelConfig = require("../../utility/modelConfig.js");
-const gemini = require("../../utility/gemini.js");
+const llm = require("../../utility/llm.js");
 const schedule = require("../../utility/schedule.js");
 require('dotenv').config();
 
 function describeModel(p) {
-    return `${p.name}｜thinking ${p.thinkingLevel}｜輸出上限 ${p.maxOutputTokens}｜$${p.inputPricePerM} / $${p.outputPricePerM} 每百萬 token（輸入/輸出）`;
+    const depth = p.provider === 'claude' ? `effort ${p.effort}` : `thinking ${p.thinkingLevel}`;
+    const search = p.searchPricePer1K ? `｜搜尋 $${p.searchPricePer1K} 每千次` : '';
+    return `${p.name}｜${p.provider}｜${depth}｜輸出上限 ${p.maxOutputTokens}｜$${p.inputPricePerM} / $${p.outputPricePerM} 每百萬 token（輸入/輸出）${search}`;
 }
 
 /** git pull 後重新讀取 config/models.json 與 prompts/default.txt，回傳附加在輸出後的說明。 */
@@ -23,7 +25,7 @@ function reloadAfterPull() {
         notes.push(`⚠️ config/models.json 載入失敗，沿用原設定：${e.message}`);
     }
     try {
-        gemini.reloadPrompt();
+        llm.reloadPrompt();
         notes.push('system prompt 已重新載入');
     } catch (e) {
         notes.push(`⚠️ prompts/default.txt 載入失敗，沿用原內容：${e.message}`);
@@ -101,9 +103,9 @@ module.exports = {
                     break;
                 }
 
-                // 先實際呼叫一次，模型名稱打錯或 thinkingLevel 不支援時就不切換，避免之後每則訊息都失敗。
+                // 先實際呼叫一次，模型名稱打錯、參數不支援或金鑰未設定時就不切換，避免之後每則訊息都失敗。
                 try {
-                    await gemini.probe(profile);
+                    await llm.probe(profile);
                 } catch (e) {
                     await interaction.editReply(`測試呼叫失敗，未切換：\`\`\`${e.message}\`\`\``);
                     break;
@@ -163,7 +165,7 @@ module.exports = {
                 const usage = "可用的操作：\n" +
                     "- eval <code>: eval program\n" +
                     "- pull: git pull (並重新載入 config/models.json)\n" +
-                    "- model [name]: 查看／切換 Gemini 模型\n" +
+                    "- model [name]: 查看／切換聊天模型（Gemini / Claude）\n" +
                     "- schedule test <tw|jp>: 以最新公告測試日程預告（不建立討論串、不發布）\n" +
                     "- schedule draft <tw|jp>: 以最新公告產生正式草稿到審核頻道（附按鈕，✅ 會真的發布）\n" +
                     "- schedule poll: 立即檢查一次新公告\n" +

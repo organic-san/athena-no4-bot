@@ -4,7 +4,7 @@ const func = require('../utility/functions');
 const system = require('../utility/system');
 const gptConfig = require('../utility/gptConfig');
 const notify = require('../utility/notify');
-const gemini = require('../utility/gemini');
+const llm = require('../utility/llm');
 
 const MAX_DEPTH = 200;
 
@@ -29,8 +29,8 @@ async function buildHistory(channel, referenceId, botId, depth) {
     const text = msg.content.replace(/<@!?\d+>/g, '').trim() || '(empty)';
 
     return [...parent, {
-        role: isBot ? 'model' : 'user',
-        parts: [{ text: isBot ? text : `[${speakerOf(msg)}]: ${text}` }],
+        role: isBot ? 'assistant' : 'user',
+        text: isBot ? text : `[${speakerOf(msg)}]: ${text}`,
     }];
 }
 
@@ -59,18 +59,13 @@ module.exports = {
 
         await msg.channel.sendTyping();
 
-        // 若有圖片，下載並轉為 base64 inline data
-        let imagePart = null;
+        // 若有圖片，下載並轉為 base64
+        let image = null;
         if (imageAttachment) {
             try {
                 const res = await fetch(imageAttachment.url);
                 const buffer = await res.arrayBuffer();
-                imagePart = {
-                    inlineData: {
-                        mimeType: imageAttachment.contentType,
-                        data: Buffer.from(buffer).toString('base64'),
-                    }
-                };
+                image = { mimeType: imageAttachment.contentType, data: Buffer.from(buffer).toString('base64') };
             } catch (e) {
                 console.error('Failed to fetch image attachment:', e);
             }
@@ -80,50 +75,37 @@ module.exports = {
             ? await buildHistory(msg.channel, msg.reference.messageId, client.user.id, MAX_DEPTH)
             : [];
 
-        // SDK 要求 history 以 user turn 起始。使用者回覆機器人訊息時重建出的歷史會以 model 開頭
-        // （官方稱 prefilled model turn，Gemini 3.x 起明確不建議），補一則開場 user turn 使其合法。
-        if (history[0]?.role === 'model') {
-            history.unshift({ role: 'user', parts: [{ text: '（以下是先前的對話紀錄）' }] });
-        }
-
         try {
             const toolCtx = { userId: msg.author.id, guild: msg.guild };
-            const chatSession = gemini.ai.chats.create({
-                model: gemini.model(),
-                config: gemini.config(client.user.username, gemini.tools(toolCtx, { googleSearch: true })),
+            const { text, usage: { inputTokens, outputTokens, cost }, emptyReason } = await llm.chat({
+                botName: client.user.username,
                 history,
+                message: { text: prompt ? `[${speakerOf(msg)}]: ${prompt}` : undefined, image },
+                ctx: toolCtx,
+                webSearch: true,
             });
-
-            const messageParts = [];
-            if (imagePart) messageParts.push(imagePart);
-            if (prompt) messageParts.push({ text: `[${speakerOf(msg)}]: ${prompt}` });
-
-            const { response: result, usage: { inputTokens, outputTokens, cost } } = await gemini.send(
-                chatSession, messageParts, toolCtx
-            );
             system.recordUsage(
                 msg.author.id, msg.author.username,
                 inputTokens, outputTokens, cost
             );
 
             // 回應可能沒有文字（被安全過濾擋下、輸出額度用盡、或空回應）→ 給明確訊息而非丟例外
-            const emptyReason = gemini.emptyReason(result);
             if (emptyReason) {
                 await msg.reply(`這次沒有產生內容（${emptyReason}），換個說法再試試看。`);
                 return;
             }
 
             // AI 產生的內容不允許觸發 @everyone／身分組／任意成員提及，避免被誘導轟炸
-            const sends = func.sliceByWordCount(result.text, 1950);
+            const sends = func.sliceByWordCount(text, 1950);
             await msg.reply({ content: sends[0], allowedMentions: { parse: [], repliedUser: true } });
             for (let i = 1; i < sends.length; i++) {
                 await msg.channel.send({ content: sends[i], allowedMentions: { parse: [] } });
             }
         } catch (err) {
             notify.error('處理 chat 時發生錯誤', err);
-            // 依 ApiError.status 判斷，而非比對訊息字串（回應內文含 "429" 也會誤判）。
-            // 這裡的 429/503 是重試 2 次後仍然失敗的情況。
-            if (gemini.isOverloaded(err)) {
+            // 依錯誤的 status 判斷，而非比對訊息字串（回應內文含 "429" 也會誤判）。
+            // 這裡是重試 2 次後仍然失敗的情況。
+            if (llm.isOverloaded(err)) {
                 await msg.reply(`逼逼! 能量飲料耗光了...`);
                 return;
             }

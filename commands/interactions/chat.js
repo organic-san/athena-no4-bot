@@ -2,7 +2,7 @@ const Discord = require('discord.js');
 require('dotenv').config();
 const func = require('../../utility/functions');
 const system = require('../../utility/system');
-const gemini = require('../../utility/gemini');
+const llm = require('../../utility/llm');
 
 module.exports = {
     tag: "interaction",
@@ -22,20 +22,13 @@ module.exports = {
         const prompt = interaction.options.getString("prompt");
 
         try {
-            const toolCtx = { userId: interaction.user.id, guild: interaction.guild };
-            const chatSession = gemini.ai.chats.create({
-                model: gemini.model(),
-                config: gemini.config(client.user.username, gemini.tools(toolCtx)),
-                history: [],
-            });
-
             // 發話者標註格式與 models/message.js 一致，避免兩個入口對模型呈現不同的輸入樣貌。
             const speaker = interaction.member?.displayName || interaction.user.displayName;
-            const { response: resault, usage: { inputTokens, outputTokens, cost } } = await gemini.send(
-                chatSession,
-                { text: `[${speaker}]: ${prompt}` },
-                toolCtx
-            );
+            const { text, usage: { inputTokens, outputTokens, cost }, emptyReason } = await llm.chat({
+                botName: client.user.username,
+                message: { text: `[${speaker}]: ${prompt}` },
+                ctx: { userId: interaction.user.id, guild: interaction.guild },
+            });
 
             system.recordUsage(
                 interaction.user.id,
@@ -46,21 +39,20 @@ module.exports = {
             );
 
             // 回應可能沒有文字（被安全過濾擋下、輸出額度用盡、或空回應）→ 給明確訊息而非丟例外
-            const emptyReason = gemini.emptyReason(resault);
             if (emptyReason) {
                 await interaction.editReply(`這次沒有產生內容（${emptyReason}），換個說法再試試看。`);
                 return;
             }
 
             // AI 產生的內容不允許觸發 @everyone／身分組／任意成員提及，避免被誘導轟炸
-            const sends = func.sliceByWordCount(resault.text, 1950);
+            const sends = func.sliceByWordCount(text, 1950);
             await interaction.editReply({ content: sends[0], allowedMentions: { parse: [] } });
             for (let i = 1; i < sends.length; i++) {
                 await interaction.followUp({ content: sends[i], allowedMentions: { parse: [] } });
             }
         } catch (err) {
-            // 依 ApiError.status 判斷，而非比對訊息字串。這裡是重試 2 次後仍然失敗的情況。
-            if (gemini.isOverloaded(err)) {
+            // 依錯誤的 status 判斷，而非比對訊息字串。這裡是重試 2 次後仍然失敗的情況。
+            if (llm.isOverloaded(err)) {
                 await interaction.editReply(`逼逼! 能量飲料耗光了...`);
                 return;
             }

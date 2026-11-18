@@ -2,22 +2,33 @@
     "default": "gemini-3.5-flash-lite",
     "models": {
         "gemini-3.5-flash-lite": {
+            "provider": "gemini",
             "thinkingLevel": "MINIMAL",
             "maxOutputTokens": 2048,
             "inputPricePerM": 0.30,
             "outputPricePerM": 2.50
         },
         "gemini-3.8-flash": {
+            "provider": "gemini",
             "thinkingLevel": "LOW",
             "maxOutputTokens": 8192,
             "inputPricePerM": 0.75,
             "outputPricePerM": 3.75
         },
         "gemini-4-argon": {
+            "provider": "gemini",
             "thinkingLevel": "LOW",
             "maxOutputTokens": 8192,
             "inputPricePerM": 2.00,
             "outputPricePerM": 10.00
+        },
+        "claude-haiku-5-5": {
+            "provider": "claude",
+            "effort": "low",
+            "maxOutputTokens": 4096,
+            "inputPricePerM": 0.10,
+            "outputPricePerM": 0.50,
+            "searchPricePer1K": 10.00
         }
     }
 }
