@@ -9,12 +9,12 @@ module.exports = {
         .setName("modlog")
         .setDescription("查詢某成員的處分紀錄")
         .setContexts(InteractionContextType.Guild)
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addUserOption(o => o.setName("user").setDescription("查詢對象").setRequired(true)),
 
     async execute(client, interaction) {
-        if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ content: '只有管理員才能查詢處分紀錄。', flags: Discord.MessageFlags.Ephemeral });
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
+            await interaction.reply({ content: '你沒有查詢處分紀錄的權限（需要「禁言成員」權限）。', flags: Discord.MessageFlags.Ephemeral });
             return;
         }
 

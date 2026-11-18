@@ -2,6 +2,7 @@ const Discord = require('discord.js');
 const { PermissionFlagsBits, InteractionContextType } = require('discord.js');
 const moderation = require('../../utility/moderation.js');
 const pf = require('../../utility/punishFlow.js');
+const perm = require('../../utility/permission.js');
 require('dotenv').config();
 
 // 時長選項沿用統一定義（moderation.DURATION_CHOICES），轉成整數型 slash 選項
@@ -27,6 +28,11 @@ module.exports = {
         const target = interaction.options.getUser("user");
         const durationMin = interaction.options.getInteger("duration");
         const reason = interaction.options.getString("reason");
+        const denied = await perm.targetError(interaction, target.id);
+        if (denied) {
+            await interaction.reply({ content: denied, flags: Discord.MessageFlags.Ephemeral });
+            return;
+        }
         await interaction.deferReply();
 
         // 與右鍵流程相同，但不產生證據圖（evidenceSrc 省略）

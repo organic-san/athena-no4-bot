@@ -18,7 +18,7 @@ const USAGE_PERIODS = {
 
 const ESCALATION_ACTION = {
     ban: '停權（系統先無限期禁言，由管理員裁決是否停權）',
-    kick: '踢出',
+    kick: '踢出（系統先無限期禁言，由管理員裁決是否踢出）',
     mute: '禁言',
     warn: '追加警告',
 };

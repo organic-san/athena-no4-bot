@@ -1,5 +1,6 @@
 const Discord = require('discord.js');
 const moderation = require('./moderation.js');
+const perm = require('./permission.js');
 
 /**
  * 統一的「處分選擇流程」UI 與 customId 規範。
@@ -56,13 +57,13 @@ module.exports = {
         );
     },
 
-    /** 處分類型選單 */
-    typeSelectRow(srcToken) {
+    /** 處分類型選單：只列出執行者有權限的類型（實習管理員看不到踢出／停權）。 */
+    typeSelectRow(srcToken, interaction) {
         return new Discord.ActionRowBuilder().addComponents(
             new Discord.StringSelectMenuBuilder()
                 .setCustomId(`pf:type:${srcToken}`)
                 .setPlaceholder('選擇處分類型')
-                .addOptions(TYPE_OPTIONS)
+                .addOptions(TYPE_OPTIONS.filter(o => perm.canPunish(interaction, o.value)))
         );
     },
 

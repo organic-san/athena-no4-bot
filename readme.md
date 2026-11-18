@@ -32,5 +32,27 @@ thinking token 會計入 `maxOutputTokens`，也依 output 費率計價，
 - `/system pull`：拉下新版 `models.json` 後會自動重新載入
 - 未曾切換時使用 `default`；選用的模型從檔案移除時也會退回 `default`
 
+### 審核權限
+審核指令依 Discord 身分組權限分層，機器人不另存管理員名單（判斷集中在 `utility/permission.js`）：
+
+| 權限 | 可以做的事 |
+|---|---|
+| 禁言成員 (Moderate Members) | `/warn`、`/tempmute`、右鍵「給予處分」（只列警告、禁言）、`/close` 與其按鈕、`/modlog`、`/modrevoke`（警告、禁言）、偵測通報的「解除禁言」 |
+| 踢出成員 (Kick Members) | `/kick`、處分流程的踢出、違規過多踢出裁決、撤回踢出 |
+| 停權成員 (Ban Members) | `/ban`、處分流程的停權、違規過多停權裁決、偵測通報的「停權」、撤回停權 |
+| 管理伺服器 (Manage Server) | `/modconfig`、`/chatconfig`、日程審核按鈕 |
+| 管理員 (Administrator) | 以上全部 |
+| 開發者本人（`.env` 的 `AUTHOR_USERID`） | `/system`、`/log`、`/log2`（後兩者在指令選單上只有管理員看得到） |
+
+手動處分比照 Discord 原生規則：只能處分最高身分組比自己低的成員（管理員也一樣，伺服器擁有者例外），
+不能處分自己、機器人與伺服器擁有者；對象已離開伺服器時不限制。
+
+違規過多規則觸發踢出或停權時，一律先無限期禁言，再到管理員告知頻道發裁決訊息；
+整則裁決訊息（含改判禁言、解除禁言）只有具該權限的人能操作。
+
+**實習管理員身分組**：只開「禁言成員」，不開管理員、踢出、停權、管理身分組、管理伺服器、管理頻道、管理 Webhook。
+在處分發布頻道、管理員告知頻道開放檢視；在檢舉討論串母頻道另外開放「管理討論串」，才看得到私人的檢舉討論串。
+修改指令的預設權限後需重跑 `create-slash-global.js`。
+
 contact: 
 Discord @organic_kaami

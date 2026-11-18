@@ -16,7 +16,7 @@ module.exports = {
         .setName("modconfig")
         .setDescription("社群安全與審核系統設定")
         .setContexts(InteractionContextType.Guild)
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(s => s.setName("show").setDescription("顯示目前設定"))
         .addSubcommand(s => s
             .setName("channel").setDescription("設定功能頻道")
@@ -49,7 +49,7 @@ module.exports = {
                 .addStringOption(o => o.setName("action").setDescription("達標動作").setRequired(true)
                     .addChoices(
                         { name: "禁言 mute", value: "mute" },
-                        { name: "踢出 kick", value: "kick" },
+                        { name: "踢出 kick（由管理員確認）", value: "kick" },
                         { name: "停權 ban（由管理員確認）", value: "ban" },
                     ))
                 .addIntegerOption(o => o.setName("duration").setDescription("動作為 mute 時的時長（分鐘）").setMinValue(1)))
@@ -59,8 +59,8 @@ module.exports = {
             .addSubcommand(s => s.setName("list").setDescription("列出所有規則"))),
 
     async execute(client, interaction) {
-        if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ content: '只有管理員才能使用此指令。', flags: Discord.MessageFlags.Ephemeral });
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
+            await interaction.reply({ content: '你沒有使用此指令的權限（需要「管理伺服器」權限）。', flags: Discord.MessageFlags.Ephemeral });
             return;
         }
 

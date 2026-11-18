@@ -21,8 +21,8 @@ module.exports = {
         console.log(`button: ${interaction.customId}, from: ${interaction.guild?.name ?? 'DM'}, user: ${interaction.user.tag} (ID: ${interaction.user.id})`);
 
         try {
-            if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-                await interaction.reply({ content: '只有管理員才能操作。', flags: Discord.MessageFlags.Ephemeral });
+            if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
+                await interaction.reply({ content: '你沒有審核日程的權限（需要「管理伺服器」權限）。', flags: Discord.MessageFlags.Ephemeral });
                 return;
             }
             const draftId = Number(idStr);

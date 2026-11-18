@@ -1,9 +1,9 @@
 const Discord = require('discord.js');
-const { PermissionFlagsBits } = require('discord.js');
 const DB = require('../utility/database.js');
 const func = require('../utility/functions.js');
 const moderation = require('../utility/moderation.js');
 const pf = require('../utility/punishFlow.js');
+const perm = require('../utility/permission.js');
 const isafe = require('../utility/interactionSafe.js');
 require('dotenv').config();
 
@@ -14,8 +14,19 @@ const DETECTION_BAN_DELETE_SECONDS = 60 * 60; // 偵測（跨頻道連發）停�
 // 偵測（跨頻道連發）停權的固定理由。此情境的成因單一，不再要求管理員逐次填寫。
 const DETECTION_BAN_REASON = '跨頻道連發：受到攻擊或者失去所有權的帳號';
 
-function isAdmin(interaction) {
-    return interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
+const NO_MOD_PERM = '你沒有審核權限（需要「禁言成員」權限）。';
+
+/** 權限不足的回覆（處分類型的中文標籤）。 */
+function denyType(interaction, type) {
+    const label = moderation.TYPE_LABEL[type] || '此操作';
+    return interaction.reply({ content: `你沒有執行「${label}」的權限。`, flags: Discord.MessageFlags.Ephemeral });
+}
+
+/** 違規過多裁決的結果發布到處分頻道，並把發布訊息記為該筆處分的證據訊息。 */
+async function publishVerdict(interaction, freezeId, embed, res) {
+    if (!res.ok) embed.addFields({ name: '⚠️ 執行狀態', value: res.error || '執行失敗（紀錄已更新）' });
+    const logId = await moderation.postPunishmentLog(interaction.guild, embed);
+    if (logId) moderation.setEvidenceMsg(freezeId, logId);
 }
 
 /** 共用處分收尾（委派 moderation，補上 interaction 的執行者）。 */
@@ -71,14 +82,17 @@ module.exports = {
         try {
             // ───────── /close 三顆按鈕 ─────────
             if (ns === 'close') {
-                if (!isAdmin(interaction)) return interaction.reply({ content: '只有管理員才能操作。', flags: Discord.MessageFlags.Ephemeral });
+                if (!perm.canModerate(interaction)) return interaction.reply({ content: NO_MOD_PERM, flags: Discord.MessageFlags.Ephemeral });
                 const reportId = Number(rest[0]);
                 const report = db.prepare(`SELECT * FROM report WHERE id = ?`).get(reportId);
                 if (!report) return interaction.reply({ content: '找不到對應的檢舉案件。', flags: Discord.MessageFlags.Ephemeral });
 
                 if (action === 'punish') {
+                    // 先擋身分組高低，免得填完理由才被拒（送出時會再檢查一次）
+                    const denied = await perm.targetError(interaction, report.target_user_id);
+                    if (denied) return interaction.reply({ content: denied, flags: Discord.MessageFlags.Ephemeral });
                     // 進入統一處分流程（來源＝檢舉案件）
-                    await interaction.reply({ content: '請選擇處分類型：', components: [pf.typeSelectRow(pf.reportToken(reportId))], flags: Discord.MessageFlags.Ephemeral });
+                    await interaction.reply({ content: '請選擇處分類型：', components: [pf.typeSelectRow(pf.reportToken(reportId), interaction)], flags: Discord.MessageFlags.Ephemeral });
                     return;
                 }
                 if (action === 'delmsg') {
@@ -106,9 +120,13 @@ module.exports = {
 
             // ───────── 統一處分流程：選類型 → 選時長 → 填理由 → 執行 ─────────
             if (ns === 'pf') {
-                if (!isAdmin(interaction)) return interaction.reply({ content: '只有管理員才能操作。', flags: Discord.MessageFlags.Ephemeral });
                 const src = pf.parseSource(rest);
                 if (!src) return interaction.reply({ content: '處分流程資料無效。', flags: Discord.MessageFlags.Ephemeral });
+
+                // 每一步都依「這一步要執行的處分類型」檢查權限：選單已過濾掉沒權限的類型，
+                // 這裡再擋一次，避免權限在流程中途被移除、或舊訊息上的選單被重複使用。
+                const stepType = { type: interaction.values?.[0], dur: 'mute', bandel: 'ban', modal: src.tail[0] }[action];
+                if (!perm.canPunish(interaction, stepType)) return denyType(interaction, stepType);
 
                 if (action === 'type') {
                     const type = interaction.values[0];
@@ -144,6 +162,14 @@ module.exports = {
 
                     const ctx = await resolvePunishContext(interaction, src.srcType, src.args);
                     if (ctx.error) { await interaction.editReply(ctx.error); return; }
+                    // 身分組高低以送出當下為準（入口已先擋過一次，這裡防流程中途身分組有變）。
+                    // 回覆已公開 defer，拒絕原因改以僅本人可見的訊息送出。
+                    const denied = await perm.targetError(interaction, ctx.targetUserId);
+                    if (denied) {
+                        await interaction.deleteReply().catch(() => null);
+                        await interaction.followUp({ content: denied, flags: Discord.MessageFlags.Ephemeral });
+                        return;
+                    }
 
                     const { pid, summary } = await finalizePunishment(interaction, {
                         guild: interaction.guild, targetUserId: ctx.targetUserId, type, durationMin,
@@ -165,11 +191,15 @@ module.exports = {
                 }
             }
 
-            // ───────── Ban 裁決 ─────────
+            // ───────── 違規過多裁決（停權／踢出） ─────────
+            // customId = ban:<動作>:<freezeId>:<userId>[:<verdict>]；舊訊息沒有 verdict 段，視為停權裁決。
+            // 整則訊息的所有按鈕（含改判禁言、解除禁言）都需要該裁決類型的權限：決定「不處分」也是裁決。
             if (ns === 'ban') {
-                if (!isAdmin(interaction)) return interaction.reply({ content: '只有管理員才能裁決。', flags: Discord.MessageFlags.Ephemeral });
                 const freezeId = Number(rest[0]);
                 const targetUserId = rest[1];
+                const verdict = rest[2] === 'kick' ? 'kick' : 'ban';
+                const verdictLabel = moderation.TYPE_LABEL[verdict];
+                if (!perm.canPunish(interaction, verdict)) return denyType(interaction, verdict);
 
                 if (action === 'confirm') {
                     // 先選刪除訊息時間，再於 confirmdel 真正停權
@@ -208,9 +238,7 @@ module.exports = {
                             { name: '理由', value: reason },
                         )
                         .setTimestamp();
-                    if (!res.ok) embed.addFields({ name: '⚠️ 執行狀態', value: res.error || '執行失敗（紀錄已更新）' });
-                    const logId = await moderation.postPunishmentLog(interaction.guild, embed);
-                    if (logId) moderation.setEvidenceMsg(freezeId, logId);
+                    await publishVerdict(interaction, freezeId, embed, res);
 
                     await interaction.editReply(res.ok
                         ? `🔨 <@${interaction.user.id}> 對 <@${targetUserId}> 正式執行**停權**（處分 #${freezeId}）。`
@@ -218,8 +246,52 @@ module.exports = {
                     return;
                 }
 
+                if (action === 'kick') {
+                    await interaction.deferReply();
+                    const freeze = moderation.getPunishment(freezeId);
+                    const reason = freeze?.reason || '違規過多踢出';
+                    // 原子認領：把待裁決禁言就地轉成正式踢出（CAS，防連點/並發重複）
+                    const claimed = moderation.resolveFreeze(freezeId, { type: 'kick', duration_min: null, source: 'auto_escalation', reason });
+                    if (!claimed) {
+                        await interaction.message.edit({ components: [] }).catch(() => null);
+                        await interaction.editReply('此裁決已被處理過。');
+                        return;
+                    }
+                    // 踢出前要先解除暫時禁言：禁言不會因離開伺服器而消失，不解除的話對方重新加入後仍被禁言。
+                    // 先確認踢得動才解除，避免踢出失敗時反而把人放出來。
+                    const member = await interaction.guild.members.fetch(targetUserId).catch(() => null);
+                    let res;
+                    if (!member) res = { ok: false, error: '找不到該成員（可能已離開伺服器）。' };
+                    else if (!member.kickable) res = { ok: false, error: '機器人無法踢出此成員（身分組順序或權限不足）。' };
+                    else {
+                        try {
+                            await member.timeout(null, '違規過多裁決：改為踢出');
+                            await member.kick(reason);
+                            res = { ok: true };
+                        } catch (e) { res = { ok: false, error: String(e?.message || e) }; }
+                    }
+                    await interaction.message.edit({ components: [] }).catch(() => null);
+
+                    const embed = new Discord.EmbedBuilder()
+                        .setTitle('⚖️ 違規過多 — 踢出')
+                        .setColor(0xE67E22)
+                        .addFields(
+                            { name: '處分編號', value: `#${freezeId}`, inline: true },
+                            { name: '對象', value: `<@${targetUserId}>`, inline: true },
+                            { name: '執行者', value: `<@${interaction.user.id}>`, inline: true },
+                            { name: '理由', value: reason },
+                        )
+                        .setTimestamp();
+                    await publishVerdict(interaction, freezeId, embed, res);
+
+                    await interaction.editReply(res.ok
+                        ? `👢 <@${interaction.user.id}> 將 <@${targetUserId}> 正式**踢出**（處分 #${freezeId}）。`
+                        : `⚠️ 踢出失敗：${res.error}（紀錄已更新）`);
+                    return;
+                }
+
                 if (action === 'totimeout') {
-                    await interaction.reply({ content: '請選擇改為定時禁言的時長：', components: [pf.durationSelectRowRaw(`ban:dur:${freezeId}:${targetUserId}`)], flags: Discord.MessageFlags.Ephemeral });
+                    await interaction.reply({ content: '請選擇改為定時禁言的時長：', components: [pf.durationSelectRowRaw(`ban:dur:${freezeId}:${targetUserId}:${verdict}`)], flags: Discord.MessageFlags.Ephemeral });
                     return;
                 }
 
@@ -247,12 +319,10 @@ module.exports = {
                             { name: '對象', value: `<@${targetUserId}>`, inline: true },
                             { name: '執行者', value: `<@${interaction.user.id}>`, inline: true },
                             { name: '時長', value: pf.durationLabel(durationMin), inline: true },
-                            { name: '說明', value: '由違規過多停權裁決改判為定時禁言' },
+                            { name: '說明', value: `由違規過多${verdictLabel}裁決改判為定時禁言` },
                         )
                         .setTimestamp();
-                    if (!res.ok) embed.addFields({ name: '⚠️ 執行狀態', value: res.error || '執行失敗（紀錄已更新）' });
-                    const logId = await moderation.postPunishmentLog(interaction.guild, embed);
-                    if (logId) moderation.setEvidenceMsg(freezeId, logId);
+                    await publishVerdict(interaction, freezeId, embed, res);
 
                     await interaction.editReply(res.ok
                         ? `⏳ <@${interaction.user.id}> 已將 <@${targetUserId}> 改為定時禁言 ${pf.durationLabel(durationMin)}。`
@@ -277,7 +347,9 @@ module.exports = {
 
             // ───────── 偵測通報：解除禁言 / 停權 ─────────
             if (ns === 'det') {
-                if (!isAdmin(interaction)) return interaction.reply({ content: '只有管理員才能操作。', flags: Discord.MessageFlags.Ephemeral });
+                // 解除禁言只需審核權限；停權需要停權權限。
+                const stepType = action === 'ban' ? 'ban' : 'mute';
+                if (!perm.canPunish(interaction, stepType)) return denyType(interaction, stepType);
                 const targetUserId = rest[0];
 
                 if (action === 'unmute') {

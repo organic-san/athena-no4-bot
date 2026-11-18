@@ -2,6 +2,7 @@ const Discord = require('discord.js');
 const { PermissionFlagsBits, InteractionContextType } = require('discord.js');
 const moderation = require('../../utility/moderation.js');
 const pf = require('../../utility/punishFlow.js');
+const perm = require('../../utility/permission.js');
 require('dotenv').config();
 
 module.exports = {
@@ -10,18 +11,23 @@ module.exports = {
         .setName("warn")
         .setDescription("對指定成員給予警告（累積會觸發違規過多）")
         .setContexts(InteractionContextType.Guild)
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addUserOption(o => o.setName("user").setDescription("處分對象").setRequired(true))
         .addStringOption(o => o.setName("reason").setDescription("處分理由").setRequired(true).setMaxLength(500)),
 
     async execute(client, interaction) {
-        if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ content: '只有管理員才能執行處分。', flags: Discord.MessageFlags.Ephemeral });
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ModerateMembers)) {
+            await interaction.reply({ content: '你沒有警告成員的權限（需要「禁言成員」權限）。', flags: Discord.MessageFlags.Ephemeral });
             return;
         }
 
         const target = interaction.options.getUser("user");
         const reason = interaction.options.getString("reason");
+        const denied = await perm.targetError(interaction, target.id);
+        if (denied) {
+            await interaction.reply({ content: denied, flags: Discord.MessageFlags.Ephemeral });
+            return;
+        }
         await interaction.deferReply();
 
         // 與右鍵流程相同，但不產生證據圖（evidenceSrc 省略）

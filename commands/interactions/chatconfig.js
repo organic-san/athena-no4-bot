@@ -11,7 +11,7 @@ module.exports = {
         .setName("chatconfig")
         .setDescription("設定可以 @ 我聊天的頻道與規則頻道")
         .setContexts(InteractionContextType.Guild)
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(s => s
             .setName("add").setDescription("新增一個聊天頻道")
             .addChannelOption(o => o.setName("channel").setDescription("允許 @ 我聊天的頻道").setRequired(true)
@@ -28,8 +28,8 @@ module.exports = {
                 .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))),
 
     async execute(client, interaction) {
-        if (!interaction.memberPermissions.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ content: '只有管理員才能設定。', flags: Discord.MessageFlags.Ephemeral });
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild)) {
+            await interaction.reply({ content: '你沒有設定的權限（需要「管理伺服器」權限）。', flags: Discord.MessageFlags.Ephemeral });
             return;
         }
 

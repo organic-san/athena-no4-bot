@@ -11,12 +11,13 @@ module.exports = {
         .setName("log")
         .setDescription("備份頻道訊息")
         .setContexts(InteractionContextType.Guild)
+        // 只限開發者本人；預設權限仍設管理員，只是讓一般成員的指令選單看不到。
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(client, interaction) {
 
-        if(!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ content: '只有管理員才能使用這個指令。', flags: Discord.MessageFlags.Ephemeral }).catch(console.error);
+        if(interaction.user.id !== process.env.AUTHOR_USERID) {
+            await interaction.reply({ content: '只有開發者本人才能使用這個指令。', flags: Discord.MessageFlags.Ephemeral }).catch(console.error);
             return;
         }
 

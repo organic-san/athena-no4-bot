@@ -11,11 +11,11 @@ module.exports = {
         .setName("close")
         .setDescription("結案目前的檢舉討論串")
         .setContexts(InteractionContextType.Guild)
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
     async execute(client, interaction) {
-        if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-            await interaction.reply({ content: '只有管理員才能結案。', flags: Discord.MessageFlags.Ephemeral });
+        if (!interaction.memberPermissions?.has(PermissionFlagsBits.ModerateMembers)) {
+            await interaction.reply({ content: '你沒有結案的權限（需要「禁言成員」權限）。', flags: Discord.MessageFlags.Ephemeral });
             return;
         }
 

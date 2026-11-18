@@ -124,7 +124,7 @@ module.exports = {
 
     getUserPunishments(guildId, userId, limit = 25) {
         // 排除「違規過多待裁決禁言」：它只是暫時止血的 hold，本身不計為處分，
-        // 待管理員以 confirm/dur 裁決後才會就地轉成真正的處分（停權／定時禁言）。
+        // 待管理員裁決後才會就地轉成真正的處分（停權／踢出／定時禁言）。
         return db.prepare(
             `SELECT * FROM punishment WHERE guild_id = ? AND target_user_id = ? AND source != 'escalation_freeze'
              ORDER BY created_at DESC LIMIT ?`
@@ -267,7 +267,8 @@ module.exports = {
 
     /**
      * 新增 warn 後檢查違規過多並自動處置。
-     * @returns {Promise<{action:string, ruleId:number}|null>} 觸發的動作，未觸發回 null。
+     * @returns {Promise<{action:string, ruleId:number, pending?:boolean}|null>}
+     *   觸發的動作；pending=true 表示 kick/ban 已轉為待裁決。未觸發回 null。
      */
     async checkEscalation(guild, userId) {
         const rules = modConfig.getRules(guild.id); // 已依「嚴重度 → 門檻」排序，取第一條達標者
@@ -282,23 +283,24 @@ module.exports = {
         const reason = `違規過多：${this.formatHours(matched.window_hours)}內警告達 ${matched.warn_threshold} 次`;
         console.log(`[auto] 違規過多觸發：${guild.name} (${guild.id}), user ${userId}, 規則 #${matched.id} → ${action}`);
 
-        if (action === 'ban') {
+        if (action === 'ban' || action === 'kick') {
             // 已有未裁決的禁言則不重複觸發（避免堆疊多筆 hold 與重複裁決訊息）。
             if (this.getPendingFreeze(guild.id, userId)) {
                 console.log(`[auto] 違規過多：user ${userId} 已有待裁決禁言，略過重複觸發`);
-                return { action: 'ban-pending', ruleId: matched.id };
+                return { action, ruleId: matched.id, pending: true };
             }
-            // Ban 永遠經人類拍板：先以無限期禁言止血（source=escalation_freeze，本身不計處分），再發 Ban 裁決訊息。
+            // 踢出與停權永遠經人類拍板（觸發的 warn 可能來自沒有踢出／停權權限的實習管理員）：
+            // 先以無限期禁言止血（source=escalation_freeze，本身不計處分），再發裁決訊息。
             const res = await this.applyDiscordAction(guild, userId, 'mute', -1, reason).catch(e => ({ ok: false, error: String(e) }));
             const freezeId = this.insertPunishment({
                 guildId: guild.id, targetUserId: userId, type: 'mute', durationMin: -1,
                 reason, source: 'escalation_freeze', executorId: 'SYSTEM',
             });
-            await this.postBanVerdict(guild, freezeId, userId, reason, res.ok ? null : res.error);
-            return { action: 'ban-pending', ruleId: matched.id };
+            await this.postEscalationVerdict(guild, action, freezeId, userId, reason, res.ok ? null : res.error);
+            return { action, ruleId: matched.id, pending: true };
         }
 
-        // warn / mute / kick：自動執行 + 記錄 + 發布
+        // warn / mute：自動執行 + 記錄 + 發布
         const res = await this.applyDiscordAction(guild, userId, action, matched.duration_min, reason)
             .catch(e => ({ ok: false, error: String(e) }));
         const pid = this.insertPunishment({
@@ -391,7 +393,7 @@ module.exports = {
 
         // 5. 違規過多結果（已於 2.5 取得 esc）轉為摘要附註
         let escalationNote = '';
-        if (esc?.action === 'ban-pending') escalationNote = '\n⚙️ 違規過多 Ban 警告：已禁言發言權限，於管理員頻道發送裁決訊息。';
+        if (esc?.pending) escalationNote = `\n⚙️ 違規過多達${TYPE_LABEL[esc.action]}門檻：已禁言發言權限，於管理員頻道發送裁決訊息。`;
         else if (esc) escalationNote = `\n⚙️ 違規過多觸發：${TYPE_LABEL[esc.action] || esc.action}。`;
 
         const statusNote = actionResult.ok ? '' : `\n⚠️ Discord 執行未完成：${actionResult.error}（紀錄已保存）`;
@@ -408,17 +410,25 @@ module.exports = {
         return tx(guildId);
     },
 
-    /** 在管理員告知頻道發送 Ban 裁決訊息。 */
-    async postBanVerdict(guild, freezePunishmentId, userId, reason, freezeError) {
+    /**
+     * 在管理員告知頻道發送違規過多裁決訊息（verdict = 'ban' | 'kick'）。
+     * 按鈕 customId：ban:<動作>:<freezeId>:<userId>:<verdict>。namespace 沿用 'ban'，
+     * 舊訊息沒有 verdict 段，處理端視為 'ban'。
+     */
+    async postEscalationVerdict(guild, verdict, freezePunishmentId, userId, reason, freezeError) {
         const conf = modConfig.get(guild.id);
         if (!conf.admin_notify_channel_id) return;
         const channel = await guild.channels.fetch(conf.admin_notify_channel_id).catch(() => null);
         if (!channel) return;
 
+        const label = TYPE_LABEL[verdict];
+        const confirm = verdict === 'kick'
+            ? { action: 'kick', label: '正式踢出', emoji: '👢' }
+            : { action: 'confirm', label: '正式 Ban', emoji: '🔨' };
         const embed = new Discord.EmbedBuilder()
-            .setTitle('🔨 用戶違規過多停權確認')
+            .setTitle(`${confirm.emoji} 用戶違規過多${label}確認`)
             .setColor(0xED4245)
-            .setDescription(`<@${userId}> 因違規過多已達停權 Ban 門檻，暫時處分**無限期禁言**。\n須由管理員判斷最終處置。`)
+            .setDescription(`<@${userId}> 因違規過多已達${label}門檻，暫時處分**無限期禁言**。\n須由具${label}權限的管理員判斷最終處置。`)
             .addFields(
                 { name: '對象', value: `<@${userId}> (${userId})` },
                 { name: '理由', value: reason },
@@ -426,15 +436,16 @@ module.exports = {
             .setTimestamp();
         if (freezeError) embed.addFields({ name: '⚠️ 禁言狀態', value: freezeError });
 
+        const id = (action) => `ban:${action}:${freezePunishmentId}:${userId}:${verdict}`;
         const row = new Discord.ActionRowBuilder().addComponents(
             new Discord.ButtonBuilder()
-                .setCustomId(`ban:confirm:${freezePunishmentId}:${userId}`)
-                .setLabel('正式 Ban').setStyle(Discord.ButtonStyle.Danger).setEmoji('🔨'),
+                .setCustomId(id(confirm.action))
+                .setLabel(confirm.label).setStyle(Discord.ButtonStyle.Danger).setEmoji(confirm.emoji),
             new Discord.ButtonBuilder()
-                .setCustomId(`ban:totimeout:${freezePunishmentId}:${userId}`)
+                .setCustomId(id('totimeout'))
                 .setLabel('改為定時禁言').setStyle(Discord.ButtonStyle.Primary).setEmoji('⏳'),
             new Discord.ButtonBuilder()
-                .setCustomId(`ban:unmute:${freezePunishmentId}:${userId}`)
+                .setCustomId(id('unmute'))
                 .setLabel('解除禁言').setStyle(Discord.ButtonStyle.Secondary).setEmoji('✅'),
         );
 
