@@ -1,5 +1,5 @@
 {
-    "model": "gemini-4-argon",
+    "model": "gemini-4-carbon",
     "thinkingLevel": "LOW",
     "maxOutputTokens": 32768,
     "pollMinutes": 10,
