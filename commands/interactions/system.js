@@ -179,9 +179,5 @@ module.exports = {
             await interaction.editReply("在處理過程中發生意外的錯誤：```" + err + "```").catch(console.error);
             return;
         }
-
-        setTimeout(() => {
-            interaction.deleteReply().catch(console.error);
-        }, 10 * 1000);
     }
 };
